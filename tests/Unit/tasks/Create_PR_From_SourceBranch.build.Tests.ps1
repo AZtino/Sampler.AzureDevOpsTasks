@@ -126,4 +126,68 @@ Describe 'Create_PR_From_SourceBranch' {
             Should -Invoke -CommandName 'Invoke-RestMethod'
         }
     }
+
+    Context 'When creating change log PR and UseDefaultCredentials is true' {
+        BeforeAll {
+            Mock -CommandName 'git' -ParameterFilter {
+                $Argument -contains 'ls-remote'
+            } -MockWith {
+                return 'refs/heads/myBranchName'
+            }
+
+            Mock -CommandName Get-BuiltModuleVersion -MockWith {
+                return '2.0.0'
+            }
+
+            Mock -CommandName Invoke-RestMethod
+
+            $mockTaskParameters = @{
+                ProjectPath = Join-Path -Path $TestDrive -ChildPath 'MyModule'
+                OutputDirectory = Join-Path -Path $TestDrive -ChildPath 'MyModule/output'
+                SourcePath = Join-Path -Path $TestDrive -ChildPath 'MyModule/source'
+                ProjectName = 'MyModule'
+                BasicAuthPAT = '22222'
+                MainGitBranch = 'main'
+                PullRequestConfigInstance = 'instance'
+                PullRequestConfigCollection = 'collection'
+                PullRequestConfigProject = 'project'
+                UseDefaultCredentials = $true
+            }
+
+            $script:previousRepositoryID = $null
+
+            if ($BuildInfo)
+            {
+                if ($BuildInfo.PullRequestConfig)
+                {
+                    $script:previousRepositoryID = $BuildInfo.PullRequestConfig.RepositoryID
+                }
+
+                $BuildInfo.PullRequestConfig = @{
+                    RepositoryID = 'repositoryName'
+                }
+            }
+            else
+            {
+                $BuildInfo = @{
+                    PullRequestConfig = @{
+                        RepositoryID = 'repositoryName'
+                    }
+                }
+            }
+        }
+
+        AfterAll {
+            # Cleanup
+            $BuildInfo.PullRequestConfig.RepositoryID = $script:previousRepositoryID
+        }
+
+        It 'Should run the build task without throwing' {
+            {
+                Invoke-Build -Task $buildTaskName -File $taskAlias.Definition @mockTaskParameters
+            } | Should -Not -Throw
+
+            Should -Invoke -CommandName 'Invoke-RestMethod'
+        }
+    }
 }
