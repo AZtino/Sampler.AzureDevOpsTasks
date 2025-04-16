@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Adding
+- Task `Create_PR_From_SourceBranch`
+  - support for windows authentication (UseDefaultCredential)
+
 ## [0.1.2] - 2023-03-13
 
 ### Fixed
