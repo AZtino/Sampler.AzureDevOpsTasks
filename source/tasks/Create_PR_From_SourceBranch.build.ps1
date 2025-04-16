@@ -31,6 +31,11 @@
         The personal access token to use to access the Azure DevOps Git repository
         to create the PR.
 
+    .PARAMETER UseDefaultCredentials
+        Use 'DefaultCredential'(Windows-Authentication) to access the Azure DevOps
+        Git repository to create the PR. Use this for DevOps OnPrem deployments.
+        The PAT is not required with this authentication methode.
+
     .PARAMETER PullRequestConfigBranchName
         The name of the branch to base the PR from (source branch). Defaults to
         'updateChangelogAfterv{0}'.
@@ -99,6 +104,10 @@ param
 
     [Parameter()]
     [System.String]
+    $UseDefaultCredentials = (property UseDefaultCredentials $false),
+
+    [Parameter()]
+    [System.String]
     $PullRequestConfigBranchName = (property PullRequestConfigBranchName 'updateChangelogAfterv{0}'),
 
     [Parameter()]
@@ -137,11 +146,6 @@ param
 task Create_PR_From_SourceBranch {
     . Set-SamplerTaskVariable
 
-    if ([System.String]::IsNullOrEmpty($BasicAuthPAT))
-    {
-        throw 'Must provide a personal access token to create a pull request.'
-    }
-
     $BranchName = $PullRequestConfigBranchName -f $ModuleVersion
 
     Write-Build DarkGray ('About to create a PR based on the branch ''{0}''.' -f $BranchName)
@@ -149,8 +153,28 @@ task Create_PR_From_SourceBranch {
     Write-Build DarkGray ("`tVerifying that the branch '{0}' exist." -f $BranchName)
 
     # This should not use Invoke-SamplerGit as this should not throw if fails.
-    $base64pat = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(('{0}:{1}' -f 'PAT', $BasicAuthPAT)))
-    $upstreamChangelogBranch = git -c http.sslbackend=schannel -c http.extraHeader="Authorization: Basic $base64pat" ls-remote --heads origin $BranchName
+    if ($UseDefaultCredentials -eq $true)
+    {
+        Write-Build DarkGray ("`tusing defaultCredentails for authentication.")
+        <# We need to configure the pipeline step with
+           - checkout: self
+             submodules: true
+             persistCredentials: true
+          for this to work
+          Cached credential will be removed during cleanup of the task.
+        #>
+        $upstreamChangelogBranch = git -c http.sslbackend=schannel ls-remote --heads origin $BranchName
+    }
+    elseif (-not ([System.String]::IsNullOrEmpty($BasicAuthPAT)))
+    {
+        Write-Build DarkGray ("`tusing PAT for authentication.")
+        $base64pat = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(('{0}:{1}' -f 'PAT', $BasicAuthPAT)))
+        $upstreamChangelogBranch = git -c http.sslbackend=schannel -c http.extraHeader="Authorization: Basic $base64pat" ls-remote --heads origin $BranchName
+    }
+    else
+    {
+        throw 'Must use defaultCedentials or provide a personal access token to create a pull request.'
+    }
 
     if ($upstreamChangelogBranch)
     {
@@ -200,8 +224,6 @@ task Create_PR_From_SourceBranch {
             }
         }
 
-        $patBase64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(('{0}:{1}' -f 'PAT', $BasicAuthPAT)))
-
         $uri = 'https://{0}/{1}/{2}/_apis/git/repositories/{3}/pullrequests?supportsIterations=false&api-version=6.0' -f @(
             $PullRequestConfigInstance,
             $PullRequestConfigCollection,
@@ -213,14 +235,25 @@ task Create_PR_From_SourceBranch {
             Method      = 'POST'
             Uri         = $uri
             ContentType = 'application/json; charset=utf-8'
-            Headers     = @{
-                AUTHORIZATION = 'basic {0}' -f $patBase64
-            }
-
             Body        = $payload | ConvertTo-Json
             ErrorAction = 'Stop'
         }
 
+        if ($UseDefaultCredentials -eq $true)
+        {
+            <#
+                The 'Defaultcredential'(Project Collection Build Service Accounts) need
+                the 'Contribute to pull requests' permission for the repositories.
+            #>
+            $invokeRestMethodParameters.UseDefaultCredentials = $true
+        }
+        else
+        {
+            $invokeRestMethodParameters.Headers= @{
+                AUTHORIZATION = 'basic {0}' -f $base64pat
+            }
+        }
+        
         $result = Invoke-RestMethod @invokeRestMethodParameters
 
         if ($PullRequestConfigDebug)
